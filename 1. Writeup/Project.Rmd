@@ -1,0 +1,133 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Sebastian Davila"
+date: "27 December 2015"
+output: html_document
+---
+
+The goal of this project is to predict the manner in which the people from Weight Lifting Exercise Dataset did the exercise. This is the "classe" variable in the training set. 
+
+This report is focused on how:
+
+- It may use any of the other variables to predict with. 
+- It was built the model
+- It is used cross validation, 
+- what do I think the expected out of sample error is, and why I made the choices I did. 
+
+As we have learnt along this specialisation we always start reading the data, for this exercise we’re going to read both training and testing instances:
+
+``` {r, setwd} 
+
+setwd("~/Documents/Documentos Sheby/Estudio/Specializations/Data Science/8. Practical Learning Machine/Project/1. Writeup")
+```
+
+We create a function to load all the packages that it will be necessary later.
+
+```{r, load packages} 
+
+library(caret)
+library(corrplot)
+library(data.table)
+library(foreach)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+```
+
+And finally the data is loaded.
+
+```{r} 
+datatraining <- read.csv("pml-training.csv", na.strings=c("#DIV/0!"," ", "", "NA", "NAs", "NULL"))
+datatesting <- read.csv("pml-testing.csv", na.strings=c("#DIV/0!"," ", "", "NA", "NAs", "NULL"))
+
+```
+
+##Cleaning Data
+
+It is necessary to drop all the columns with NAs, at the same time drop highly correlated variables, and those with valor equal to 0 ( or approximately to 0) variance. Thinking in making this report shorter, the results of this chunk will be hidden.
+
+```{r, results='hide'}
+str(datatraining)
+cleantraining <- datatraining[, -which(names(datatraining) %in% c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window"))]
+cleantraining = cleantraining[, colSums(is.na(cleantraining)) == 0] #For droping columns with NAs
+zerovariance = nearZeroVar(cleantraining[sapply(cleantraining, is.numeric)], saveMetrics=TRUE)
+cleantraining = cleantraining[, zerovariance[, 'nzv'] == 0] #to remove 0 or near to 0 variance variables
+corrmatrix <- cor(na.omit(cleantraining[sapply(cleantraining, is.numeric)]))
+dim(corrmatrix)
+corrmatrixdegreesoffreedom <- expand.grid(row = 1:52, col = 1:52)
+corrmatrixdegreesoffreedom$correlation <- as.vector(corrmatrix) #For return the correlation matrix in matrix format
+removehighcorrelation <- findCorrelation(corrmatrix, cutoff = .7, verbose = TRUE)
+cleantraining <- cleantraining[, -removehighcorrelation] #To remove highly correlated variables (in psychometric theory .7+ correlation is a high correlation)
+
+for(i in c(8:ncol(cleantraining)-1)) {cleantraining[,i] = as.numeric(as.character(cleantraining[,i]))}
+
+for(i in c(8:ncol(datatesting)-1)) {datatesting[,i] = as.numeric(as.character(datatesting[,i]))} #Some columns were blank, hence are dropped. It will be use a set that only includes complete columns.user name was also removed, timestamps and windows to have a light data set.
+
+featureset <- colnames(cleantraining[colSums(is.na(cleantraining)) == 0])[-(1:7)]
+modeldata <- cleantraining[featureset]
+featureset # This is the model for suture setting.
+```
+
+## Model
+
+For modelling it is required to split the sample into two new ones, where 60% will be for training, and the rest 40%, for testing. As usual.
+
+```{r}
+spliting <- createDataPartition(modeldata$classe, p=0.6, list=FALSE )
+training.set <- modeldata[spliting,]
+testing.set <- modeldata[-spliting,]
+```
+
+Thanks to the Random Forest Algorithm the model is fitted. The algorithm is solidly built to correlated covariates and outliers; however the highly correlated variables have been removed. For validation, a five fold cross validation has been used.
+
+```{r}
+control <- trainControl(method="cv", 5)
+model <- train(classe ~ ., data=training.set, method="rf", trControl=control, ntree=250)
+model
+```
+
+It is important to notice that the validation data set is estimated for the performance of the model itself.
+
+```{r}
+predict <- predict(model, testing.set)
+confusionMatrix(testing.set$classe, predict)
+
+accuracy <- postResample(predict, testing.set$classe)
+accuracy
+```
+
+* Estimated accuracy of the model: 97.7% 
+* Estimated out of sample error: 2.3%.
+
+##Predictions
+
+Next step, is to apply the model to the original testing data set.
+
+```{r, results='hide'}
+result <- predict(model, training.set[, -length(names(training.set))])
+result
+```  
+
+## Tree
+```{r}
+treeMod <- rpart(classe ~ ., data=cleantraining, method="class")
+prp(treeMod) 
+```
+
+## ANSWERS
+```{r}
+writefilesfunction = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+datatesting <- datatesting[featureset[featureset!='classe']]
+answers <- predict(model, newdata=datatesting)
+answers
+
+writefilesfunction(answers)
+```
+
